@@ -177,7 +177,7 @@ func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
 
 }
 
-func HandlerAddFeed(s *State, cmd Command) error {
+func HandlerAddFeed(s *State, cmd Command, user database.User) error {
 	if len(cmd.Args) == 0 {
 		return fmt.Errorf("feed name and url is required")
 	}
@@ -222,7 +222,7 @@ func HandlerAddFeed(s *State, cmd Command) error {
 	return nil
 }
 
-func HandlerFollowing(s *State, cmd Command) error {
+func HandlerFollowing(s *State, cmd Command, user database.User) error {
 	currUser, err := getCurrentUser(s)
 	if err != nil {
 		return err
@@ -238,7 +238,7 @@ func HandlerFollowing(s *State, cmd Command) error {
 	return nil
 }
 
-func HandlerFollow(s *State, cmd Command) error {
+func HandlerFollow(s *State, cmd Command, user database.User) error {
 	if len(cmd.Args) < 1 {
 		fmt.Println("feed url is required")
 		os.Exit(1)

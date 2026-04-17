@@ -8,6 +8,7 @@ import (
 	"github.com/agomesd/rss-feed/internal/config"
 	"github.com/agomesd/rss-feed/internal/database"
 	"github.com/agomesd/rss-feed/internal/handlers"
+	"github.com/agomesd/rss-feed/internal/middleware"
 	_ "github.com/lib/pq"
 )
 
@@ -31,10 +32,10 @@ func main() {
 	cmds.Register("reset", handlers.HandlerReset)
 	cmds.Register("users", handlers.HandlerUsers)
 	cmds.Register("agg", handlers.HandlerAgg)
-	cmds.Register("addfeed", handlers.HandlerAddFeed)
+	cmds.Register("addfeed", middleware.LoggedIn(handlers.HandlerAddFeed))
 	cmds.Register("feeds", handlers.HandlerFeeds)
-	cmds.Register("follow", handlers.HandlerFollow)
-	cmds.Register("following", handlers.HandlerFollowing)
+	cmds.Register("follow", middleware.LoggedIn(handlers.HandlerFollow))
+	cmds.Register("following", middleware.LoggedIn(handlers.HandlerFollowing))
 
 	args := os.Args
 

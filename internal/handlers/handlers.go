@@ -186,26 +186,87 @@ func HandlerAddFeed(s *State, cmd Command) error {
 		return fmt.Errorf("feed url is required")
 	}
 
-	user, err := s.DB.GetUser(context.Background(), s.Config.CurrentUserName)
+	currUser, err := getCurrentUser(s)
 	if err != nil {
 		return err
 	}
 
-	params := database.CreateFeedParams{
+	createFeedParams := database.CreateFeedParams{
 		ID:        uuid.New(),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 		Name:      cmd.Args[0],
 		Url:       cmd.Args[1],
-		UserID:    user.ID,
+		UserID:    currUser.ID,
 	}
 
-	feed, err := s.DB.CreateFeed(context.Background(), params)
+	feed, err := s.DB.CreateFeed(context.Background(), createFeedParams)
+	if err != nil {
+		return err
+	}
+
+	followParams := database.CreateFeedFollowParams{
+		ID:        uuid.New(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		UserID:    currUser.ID,
+		FeedID:    feed.ID,
+	}
+
+	_, err = s.DB.CreateFeedFollow(context.Background(), followParams)
 	if err != nil {
 		return err
 	}
 
 	fmt.Println(feed)
+	return nil
+}
+
+func HandlerFollowing(s *State, cmd Command) error {
+	currUser, err := getCurrentUser(s)
+	if err != nil {
+		return err
+	}
+
+	feeds, err := s.DB.GetFeedFollowsForUser(context.Background(), currUser.ID)
+	if err != nil {
+		return err
+	}
+	for _, feed := range feeds {
+		fmt.Println(feed.FeedName)
+	}
+	return nil
+}
+
+func HandlerFollow(s *State, cmd Command) error {
+	if len(cmd.Args) < 1 {
+		fmt.Println("feed url is required")
+		os.Exit(1)
+	}
+
+	feed, err := s.DB.GetFeedByURL(context.Background(), cmd.Args[0])
+	if err != nil {
+		return err
+	}
+	currUser, err := getCurrentUser(s)
+
+	if err != nil {
+		return err
+	}
+
+	params := database.CreateFeedFollowParams{
+		ID:        uuid.New(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		UserID:    currUser.ID,
+		FeedID:    feed.ID,
+	}
+
+	follow, err := s.DB.CreateFeedFollow(context.Background(), params)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Feed: %s followed by %s\n", follow.FeedName, follow.UserName)
 	return nil
 }
 
@@ -224,4 +285,14 @@ func cleanFeed(f RSSFeed) RSSFeed {
 	}
 	f.Channel.Item = newItems
 	return f
+}
+
+func getCurrentUser(s *State) (database.User, error) {
+	user, err := s.DB.GetUser(context.Background(), s.Config.CurrentUserName)
+	if err != nil {
+		return database.User{}, err
+	}
+
+	return user, err
+
 }

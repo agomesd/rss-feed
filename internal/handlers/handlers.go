@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/xml"
 	"fmt"
 	"html"
@@ -136,14 +137,20 @@ func HandlerUsers(s *State, cmd Command) error {
 	return nil
 }
 
-func HandlerAgg(s *State, cmd Command) error {
-	feed, err := fetchFeed(context.Background(), "https://www.wagslane.dev/index.xml")
+func HandlerAgg(s *State, cmd Command, user database.User) error {
+	if len(cmd.Args) < 1 {
+		return fmt.Errorf("time_between_reqs required")
+	}
+	duration, err := time.ParseDuration(cmd.Args[0])
 	if err != nil {
 		return err
 	}
 
-	fmt.Println(feed)
-	return nil
+	fmt.Printf("Collecting feeds every %s\n", duration.String())
+	ticker := time.NewTicker(duration)
+	for ; ; <-ticker.C {
+		scrapeFeeds(s, cmd, user)
+	}
 }
 
 func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
@@ -186,18 +193,13 @@ func HandlerAddFeed(s *State, cmd Command, user database.User) error {
 		return fmt.Errorf("feed url is required")
 	}
 
-	currUser, err := getCurrentUser(s)
-	if err != nil {
-		return err
-	}
-
 	createFeedParams := database.CreateFeedParams{
 		ID:        uuid.New(),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 		Name:      cmd.Args[0],
 		Url:       cmd.Args[1],
-		UserID:    currUser.ID,
+		UserID:    user.ID,
 	}
 
 	feed, err := s.DB.CreateFeed(context.Background(), createFeedParams)
@@ -209,7 +211,7 @@ func HandlerAddFeed(s *State, cmd Command, user database.User) error {
 		ID:        uuid.New(),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
-		UserID:    currUser.ID,
+		UserID:    user.ID,
 		FeedID:    feed.ID,
 	}
 
@@ -223,15 +225,16 @@ func HandlerAddFeed(s *State, cmd Command, user database.User) error {
 }
 
 func HandlerFollowing(s *State, cmd Command, user database.User) error {
-	currUser, err := getCurrentUser(s)
+	feeds, err := s.DB.GetFeedFollowsForUser(context.Background(), user.ID)
 	if err != nil {
 		return err
 	}
 
-	feeds, err := s.DB.GetFeedFollowsForUser(context.Background(), currUser.ID)
-	if err != nil {
-		return err
+	if len(feeds) == 0 {
+		fmt.Println("not following any feeds")
+		return nil
 	}
+
 	for _, feed := range feeds {
 		fmt.Println(feed.FeedName)
 	}
@@ -248,17 +251,12 @@ func HandlerFollow(s *State, cmd Command, user database.User) error {
 	if err != nil {
 		return err
 	}
-	currUser, err := getCurrentUser(s)
-
-	if err != nil {
-		return err
-	}
 
 	params := database.CreateFeedFollowParams{
 		ID:        uuid.New(),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
-		UserID:    currUser.ID,
+		UserID:    user.ID,
 		FeedID:    feed.ID,
 	}
 
@@ -268,6 +266,26 @@ func HandlerFollow(s *State, cmd Command, user database.User) error {
 	}
 	fmt.Printf("Feed: %s followed by %s\n", follow.FeedName, follow.UserName)
 	return nil
+}
+
+func HandlerUnfollow(s *State, cmd Command, user database.User) error {
+	if len(cmd.Args) < 1 {
+		return fmt.Errorf("feed url required")
+	}
+	feed, err := s.DB.GetFeedByURL(context.Background(), cmd.Args[0])
+	if err != nil {
+		return err
+	}
+	params := database.UnfollowFeedParams{
+		UserID: user.ID,
+		FeedID: feed.ID,
+	}
+	if err = s.DB.UnfollowFeed(context.Background(), params); err != nil {
+		return err
+	}
+
+	return nil
+
 }
 
 func cleanFeed(f RSSFeed) RSSFeed {
@@ -287,12 +305,31 @@ func cleanFeed(f RSSFeed) RSSFeed {
 	return f
 }
 
-func getCurrentUser(s *State) (database.User, error) {
-	user, err := s.DB.GetUser(context.Background(), s.Config.CurrentUserName)
+func scrapeFeeds(s *State, cmd Command, user database.User) error {
+	nextFeed, err := s.DB.GetNextFeedToFetch(context.Background(), user.ID)
 	if err != nil {
-		return database.User{}, err
+		return err
 	}
 
-	return user, err
+	markFetchedParams := database.MarkFeedFetchedParams{
+		LastFetchedAt: sql.NullTime{
+			Time:  time.Now(),
+			Valid: true,
+		},
+		ID: nextFeed.ID,
+	}
 
+	feed, err := s.DB.MarkFeedFetched(context.Background(), markFetchedParams)
+	if err != nil {
+		return err
+	}
+	fetchedFeed, err := fetchFeed(context.Background(), feed.Url)
+	if err != nil {
+		return err
+	}
+
+	for _, item := range fetchedFeed.Channel.Item {
+		fmt.Println(item.Title)
+	}
+	return nil
 }

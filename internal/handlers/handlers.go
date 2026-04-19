@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/agomesd/rss-feed/internal/config"
@@ -149,8 +150,33 @@ func HandlerAgg(s *State, cmd Command, user database.User) error {
 	fmt.Printf("Collecting feeds every %s\n", duration.String())
 	ticker := time.NewTicker(duration)
 	for ; ; <-ticker.C {
-		scrapeFeeds(s, cmd, user)
+		scrapeFeeds(s, user)
 	}
+}
+
+func HandlerBrowse(s *State, cmd Command, user database.User) error {
+	limit := 2
+	if len(cmd.Args) >= 1 {
+		if num, err := strconv.Atoi(cmd.Args[0]); err != nil {
+			return fmt.Errorf("limit arg must be a number")
+		} else {
+			limit = num
+		}
+	}
+
+	params := database.GetPostsForUserParams{
+		ID:    user.ID,
+		Limit: int32(limit),
+	}
+
+	posts, err := s.DB.GetPostsForUser(context.Background(), params)
+	if err != nil {
+		return fmt.Errorf("Get Posts for User Error: %w", err)
+	}
+	for _, post := range posts {
+		fmt.Printf("* Post: %s - %v, Published: %s\n", post.Title, post.Description, post.PublishedAt)
+	}
+	return nil
 }
 
 func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
@@ -305,7 +331,7 @@ func cleanFeed(f RSSFeed) RSSFeed {
 	return f
 }
 
-func scrapeFeeds(s *State, cmd Command, user database.User) error {
+func scrapeFeeds(s *State, user database.User) error {
 	nextFeed, err := s.DB.GetNextFeedToFetch(context.Background(), user.ID)
 	if err != nil {
 		return err
@@ -329,7 +355,53 @@ func scrapeFeeds(s *State, cmd Command, user database.User) error {
 	}
 
 	for _, item := range fetchedFeed.Channel.Item {
-		fmt.Println(item.Title)
+		err = savePost(s, item, feed.ID)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		fmt.Printf("Post: %s saved!\n", item.Title)
 	}
 	return nil
+}
+
+func savePost(s *State, post RSSItem, feed_id uuid.UUID) error {
+	paresdPubAt, err := parsePublishedAt(post.PubDat)
+	if err != nil {
+		return fmt.Errorf("Save Post Error - parsing published_at: %w", err)
+	}
+	params := database.CreatePostParams{
+		ID:          uuid.New(),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		Title:       post.Title,
+		Url:         post.Link,
+		Description: sql.NullString{String: post.Description, Valid: post.Description != ""},
+		PublishedAt: paresdPubAt,
+		FeedID:      feed_id,
+	}
+	_, err = s.DB.CreatePost(context.Background(), params)
+	if err != nil {
+		return fmt.Errorf("Save Post Error - create post: %w", err)
+	}
+
+	return nil
+
+}
+
+func parsePublishedAt(s string) (time.Time, error) {
+	layouts := []string{
+		time.RFC1123Z,
+		time.RFC1123,
+		time.RFC3339,
+		"02 Jan 2006 15:04:05 -0700",
+	}
+
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err != nil {
+			return t, nil
+		}
+	}
+
+	return time.Time{}, fmt.Errorf("Unable to parse time: %s", s)
 }
